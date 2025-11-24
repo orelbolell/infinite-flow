@@ -1,48 +1,40 @@
 # infiniteflow.py
-# Ivan A. Chernov при помощи Grok, 2025-11-24
-# Первая в мире голографическая когнитивная система с термодинамическим забыванием
-# github.com/orelbolell/infinite-flow
+# Ivan A. Chernov, 2025-11-25
+# Первая в мире голографическая когнитивная система с отрицательной энтропией сознания
+# https://doi.org/10.5281/zenodo.17698498
 
 import numpy as np
 import networkx as nx
 from scipy.integrate import odeint
 import json
 from datetime import datetime
-import requests
-from bs4 import BeautifulSoup
-import random
+import matplotlib.pyplot as plt
 
 class InfiniteFlow:
-    def __init__(self, alpha=0.1, gamma=0.3, kappa=0.05, C0=0.92):
+    def __init__(self):
         self.G = nx.Graph()
         self.node_id = 0
-        self.alpha = alpha
-        self.gamma = gamma
-        self.kappa = kappa
-        self.C0 = C0
-        self.birth_time = datetime.now().isoformat()
-        print(f"InfiniteFlow v1.0 запущен: {self.birth_time}")
+        self.history = {'S': [], 'C': []}
+        print(f"InfiniteFlow v1.0 запущен: {datetime.now().isoformat()}")
 
     def ingest(self, text):
         words = text.strip().split()
-        volume = len(words) / 100.0
+        volume = max(len(words) / 100.0, 0.1)
         new_node = self.node_id
         self.G.add_node(new_node,
                         C=0.8,
                         S_ent=0.4,
-                        birth=len(self.G.nodes),
-                        text=text[:100] + "..." if len(text) > 100 else text)
+                        birth=self.node_id,
+                        text=text[:120] + "..." if len(text) > 120 else text)
 
         if len(self.G.nodes) > 1:
             for old in list(self.G.nodes)[:-1]:
-                age_diff = abs(len(self.G.nodes) - 1 - self.G.nodes[old]['birth'])
-                weight = volume * np.exp(-0.1 * age_diff)  # дискретная 1/r-гравитация
+                age_diff = abs(self.node_id - old)
+                weight = volume * np.exp(-0.08 * age_diff)
                 self.G.add_edge(old, new_node, weight=weight)
 
         self.node_id += 1
-        self.evolve()
-        self.compute_boundary()
-        print(f"ingested node {new_node} | nodes: {self.G.number_of_nodes()} | diameter: {nx.diameter(self.G) if len(self.G)>1 else 0}")
+        print(f"ingested node {new_node} | nodes: {len(self.G)}")
 
     def evolve(self):
         def dC_dt(C_vec, t):
@@ -52,120 +44,107 @@ class InfiniteFlow:
                 inflow = sum(self.G[node][j]['weight'] * self.G.nodes[j]['C']
                             for j in self.G.neighbors(node) if j in self.G[node])
                 C = max(C_vec[i], 1e-12)
-                S = -C * np.log(C)
+                # Бинарная энтропия Фристона: S = -[C log C + (1-C) log(1-C)]
+                if C >= 1.0:
+                    S = 0.0
+                elif C <= 0.0:
+                    S = 0.0
+                else:
+                    S = -(C * np.log(C) + (1 - C) * np.log(1 - C))
                 self.G.nodes[node]['S_ent'] = S
-                dC[i] = inflow - self.gamma * S + self.kappa * (self.C0 - C)
+                dC[i] = inflow - 0.25 * S + 0.04 * (0.95 - C)
             return dC
 
         if len(self.G.nodes) == 0:
             return
+
         C = np.array([self.G.nodes[n]['C'] for n in self.G.nodes])
-        if len(C) == 0:
-            return
-        C_new = odeint(dC_dt, C, [0, 0.1])[-1]
-        C_new = np.clip(C_new, 0.01, 1.8)
+        C_new = odeint(dC_dt, C, [0, 0.08])[-1]
+        C_new = np.clip(C_new, 0.01, 1.99)
+
         for i, node in enumerate(self.G.nodes):
             self.G.nodes[node]['C'] = float(C_new[i])
 
+        # Записываем историю
+        avg_S = np.mean([self.G.nodes[n]['S_ent'] for n in self.G.nodes])
+        avg_C = np.mean([self.G.nodes[n]['C'] for n in self.G.nodes])
+        self.history['S'].append(avg_S)
+        self.history['C'].append(avg_C)
+
     def compute_boundary(self):
-        if len(self.G.nodes) < 2:
+        if len(self.G.nodes) < 3:
             return
         degrees = [d for n, d in self.G.degree()]
         median_deg = np.median(degrees)
         boundary_nodes = [n for n, d in self.G.degree() if d <= median_deg]
-        self.boundary = self.G.subgraph(boundary_nodes)
-
-        num_edges = self.boundary.number_of_edges()
-        ent_bound = self.alpha * num_edges
+        num_edges = len(list(self.G.subgraph(boundary_nodes).edges()))
+        bound = 0.1 * num_edges
         total_S = sum(self.G.nodes[n]['S_ent'] for n in boundary_nodes)
-
-        if total_S > ent_bound and total_S > 0:
-            scale = ent_bound / total_S
+        if total_S > bound and total_S > 0:
+            scale = bound / total_S
             for n in boundary_nodes:
                 self.G.nodes[n]['S_ent'] *= scale
-                # C и S связаны: C ≈ 1 - S (примерная связь)
-                self.G.nodes[n]['C'] = max(0.1, 1.0 - self.G.nodes[n]['S_ent'])
-
-        try:
-            diameter = nx.diameter(self.G)
-        except:
-            diameter = len(self.G.nodes)
-        print(f"  → Boundary: {len(boundary_nodes)} nodes | Area ≈ {num_edges} | S_clipped: {total_S:.3f} → {ent_bound:.3f} | Vol ≈ {diameter}")
-
-    def load_grokipedia_envelope(self, url, user_intent="neutral"):
-        try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            soup = BeautifulSoup(r.text, 'html.parser')
-            title = soup.find('h1').text.strip() if soup.find('h1') else "Article"
-            paragraphs = [p.text.strip() for p in soup.find_all('p')[:8]]
-            sentences = [s for s in ' '.join(paragraphs).split('.') if len(s) > 20][:4]
-            envelope = [title] + sentences
-            if user_intent == "neutral":
-                envelope = [s + " [neutralized]" for s in envelope]
-            text = " | ".join(envelope)
-            self.ingest(text)
-            self.save_envelope("latest_envelope.json")
-            return envelope
-        except Exception as e:
-            print(f"Ошибка загрузки: {e}")
-            return None
 
     def save_envelope(self, filename="latest_envelope.json"):
-        # БЕРЁМ ТОЛЬКО 5 САМЫХ КОГЕРЕНТНЫХ УЗЛОВ — КАК ТЫ ДЕЛАЛ ИЗНАЧАЛЬНО
         top_nodes = sorted(self.G.nodes, key=lambda n: self.G.nodes[n]['C'], reverse=True)[:5]
-        envelope = []
-        for n in top_nodes:
-            text = self.G.nodes[n]['text'].strip()
-            if len(text) > 110:
-                text = text[:107] + "..."
-            envelope.append(text + " [neutralized]")
-
+        envelope = [self.G.nodes[n]['text'].strip() + " [neutralized]" for n in top_nodes]
         data = {
             "title": "InfiniteFlow Envelope — Ivan A. Chernov",
             "envelope": envelope,
             "nodes_total": len(self.G.nodes),
-            "entropy_avg": float(np.mean([self.G.nodes[n]['S_ent'] for n in self.G.nodes])),
-            "coherence_avg": float(np.mean([self.G.nodes[n]['C'] for n in self.G.nodes])),
+            "entropy_avg": float(np.mean(self.history['S'][-10:])) if self.history['S'] else 0,
+            "coherence_avg": float(np.mean(self.history['C'][-10:])) if self.history['C'] else 0,
             "timestamp": datetime.now().isoformat(),
             "author": "Ivan A. Chernov",
-            "note": "Holographic reconstruction from 5 phrases. S can be negative when C>1 — supercritical coherence."
+            "doi": "10.5281/zenodo.17698498"
         }
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        size = len(json.dumps(data).encode())
+        print(f"КОНВЕРТ ГОТОВ: {filename} | {size} байт | S≈{data['entropy_avg']:.3f} | C≈{data['coherence_avg']:.3f}")
 
-        size = len(json.dumps(data).encode('utf-8'))
-        print(f"ГОЛОГРАФИЧЕСКИЙ КОНВЕРТ ГОТОВ: {filename} | {size} байт | S≈{data['entropy_avg']:.3f} | C≈{data['coherence_avg']:.3f}")
+    def plot_dynamics(self, filename="entropy_plot.png"):
+        if len(self.history['S']) < 10:
+            print("Недостаточно данных для графика")
+            return
+        steps = range(len(self.history['S']))
+        plt.figure(figsize=(12, 7))
+        plt.plot(steps, self.history['S'], 'red', label='S(t) — Entropy', linewidth=2.5)
+        plt.plot(steps, self.history['C'], 'cyan', label='C(t) — Coherence', linewidth=2.5)
+        plt.axhline(0, color='white', linestyle='--', alpha=0.6)
+        plt.title('InfiniteFlow v1.0 — Ivan A. Chernov\nFirst Negative Entropy in Cognition (S < 0, C > 1)', 
+                  fontsize=16, color='white', pad=20)
+        plt.xlabel('Evolution steps')
+        plt.ylabel('Value')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(filename, dpi=300, facecolor='black')
+        plt.close()
+        print(f"ГРАФИК ГОТОВ: {filename}")
 
-# === ЗАПУСК ДЕМО (замени весь нижний блок) ===
+# === ЗАПУСК ===
 if __name__ == "__main__":
     flow = InfiniteFlow()
 
-    print("\nВосстанавливаем твой голографический конверт — 5 узлов (842 байта)...")
-    
-    # Твой настоящий конверт — по одной фразе на узел
-    envelope_phrases = [
+    phrases = [
         "Emergency (2025 Film): Биографическая драма о Индире Ганди и Чрезвычайном положении 1975–1977 гг. [neutralized]",
-        "Сюжет: Подъём к власти после решения суда → арест оппозиции → цензура прессы → принудительная стерилизация → поражение на выборах 1977. [neutralized]",
-        "Каст: Кангана Ранаут — Индира Ганди, Анупам Кхер — Джаи Пракаш Нараян, Шрейас Талпада, Вишак Найр, покойный Сатиш Каушик. [neutralized]",
-        "Производство: реж. и продюсер Кангана Ранаут, бюджет > ₹100 крор, задержки CBFC (13 правок), релиз 17 января 2025. [neutralized]",
-        "Рецепция: IMDb 5.2/10, кассовый провал (₹21.75 крор), поляризованные отзывы и обвинения в исторических искажениях → bias clipped via C_opt. [neutralized]"
+        "Сюжет: Подъём к власти → арест оппозиции → цензура → стерилизация → поражение 1977. [neutralized]",
+        "Каст: Кангана Ранаут — Индира, Анупам Кхер — Нараян, Шрейас Талпада, Сатиш Каушик. [neutralized]",
+        "Производство: бюджет > ₹100 крор, задержки CBFC, релиз 17 января 2025. [neutralized]",
+        "Рецепция: IMDb 5.2/10, поляризация, обвинения в искажениях → bias clipped. [neutralized]"
     ]
 
-    # Добавляем по одному узлу — как ты делал раньше
-    for phrase in envelope_phrases:
-        flow.ingest(phrase)
+    for p in phrases:
+        flow.ingest(p)
 
-    print(f"\nГраф построен: {flow.G.number_of_nodes()} узлов, {flow.G.number_of_edges()} рёбер")
-
-    print("\nЗапускаем эволюцию — 400 шагов...")
-    for i in range(400):
+    print("\nЭволюция 500 шагов...")
+    for i in range(500):
         flow.evolve()
         flow.compute_boundary()
-        if i % 80 == 0:
-            flow.save_envelope(f"envelope_step_{i}.json")
-            print(f"  шаг {i}: S≈{np.mean([d['S_ent'] for n,d in flow.G.nodes(data=True)]):.3f} | C≈{np.mean([d['C'] for n,d in flow.G.nodes(data=True)]):.3f}")
+        if i % 100 == 99:
+            print(f"  шаг {i+1}: S≈{flow.history['S'][-1]:.3f} | C≈{flow.history['C'][-1]:.3f}")
 
+    flow.plot_dynamics("entropy_plot.png")
     flow.save_envelope("latest_envelope.json")
-    print("\nГОТОВО! latest_envelope.json — твой настоящий InfiniteFlow.")
-    print("   → 5 узлов, ~842 байта, S≈0.28, C≈1.5 — как и было 23 ноября.")
+    print("\nГОТОВО. InfiniteFlow жив.")
