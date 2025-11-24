@@ -1,0 +1,23 @@
+def evolve(self):
+    def dC_dt(C_vec, t):
+        dC = np.zeros_like(C_vec)
+        nodes = list(self.G.nodes)
+        for i, node in enumerate(nodes):
+            inflow = sum(self.G[node][j]['weight'] * self.G.nodes[j]['C']
+                        for j in self.G.neighbors(node) if j in self.G[node])
+            C = max(C_vec[i], 1e-12)
+            if C >= 1.0: S = 0.0
+            else: S = -(C * np.log(C) + (1 - C) * np.log(1 - C))
+            self.G.nodes[node]['S_ent'] = S
+            dC[i] = inflow - 0.25 * S + 0.04 * (0.95 - C)
+        return dC
+    if len(self.G.nodes) == 0: return
+    C = np.array([self.G.nodes[n]['C'] for n in self.G.nodes])
+    C_new = odeint(dC_dt, C, [0, 0.08])[-1]
+    C_new = np.clip(C_new, 0.01, 1.99)
+    for i, node in enumerate(self.G.nodes):
+        self.G.nodes[node]['C'] = float(C_new[i])
+    avg_S = np.mean([self.G.nodes[n]['S_ent'] for n in self.G.nodes])
+    avg_C = np.mean([self.G.nodes[n]['C'] for n in self.G.nodes])
+    self.history['S'].append(avg_S)
+    self.history['C'].append(avg_C)
